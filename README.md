@@ -1,3 +1,3 @@
 #Corpus_mind
 
-RAG based smart Ai
+RAG based smart Ai Assistant
