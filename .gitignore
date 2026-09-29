@@ -1,0 +1,22 @@
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.ipynb_checkpoints
+
+# Environment variables
+.env
+
+# Project specific directories (Local SQLite data and indices)
+data/
+uploads/*
+!uploads/.gitkeep
+vector_store/*
+!vector_store/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# IDEs
+.vscode/
+.idea/
