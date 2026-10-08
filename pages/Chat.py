@@ -30,13 +30,26 @@ if "current_response" not in st.session_state:
 if "voice_transcript" not in st.session_state:
     st.session_state.voice_transcript = ""
 
+is_admin = st.session_state.get("user_role") == "admin"
+role_badge = "👑 ADMIN" if is_admin else "👤 USER"
+role_bg = "#ef4444" if is_admin else "#3b82f6"
+
 # Sidebar layout
 with st.sidebar:
-    st.image("https://img.icons8.com/clouds/200/robot-3.png", width=70)
-    st.markdown(f"**User: {st.session_state.username}**")
-    
+    st.image("https://img.icons8.com/clouds/200/robot-3.png", width=80)
+    st.markdown(f"User: **{st.session_state.username}**")
+    st.markdown(
+        f'<span style="background-color:{role_bg}; color:white; padding:3px 8px; border-radius:12px; font-weight:bold; font-size:11px;">{role_badge}</span>',
+        unsafe_allow_html=True
+    )
+    if is_admin:
+        st.markdown("")
+        if st.button("🛡️ Admin Panel", use_container_width=True):
+            st.switch_page("pages/Admin.py")
+
     st.markdown("---")
     st.subheader("💬 Chat Sessions")
+
     
     # Create new session button
     if st.button("➕ New Chat Session", use_container_width=True):
@@ -81,12 +94,25 @@ with st.sidebar:
         st.stop()
 
     st.markdown("---")
-    st.subheader("⚙️ AI Configuration")
+    st.subheader("⚙️ AI & RAG Configuration")
     
     # Model Selection
     available_models = OllamaChatManager.get_available_models()
     selected_model = st.selectbox("LLM Model", options=available_models, index=0)
     
+    # RAG Search Mode Selection
+    rag_search_mode_ui = st.selectbox(
+        "RAG Retrieval Engine",
+        options=["Hybrid (Vector + BM25 RRF)", "Dense Vector Search", "Keyword BM25 Search"],
+        index=0
+    )
+    mode_map = {
+        "Hybrid (Vector + BM25 RRF)": "hybrid",
+        "Dense Vector Search": "dense",
+        "Keyword BM25 Search": "bm25"
+    }
+    rag_search_mode = mode_map[rag_search_mode_ui]
+
     # Settings slider
     temp = st.slider("Temperature", min_value=0.0, max_value=1.2, value=0.7, step=0.1)
     max_tok = st.slider("Max Output Tokens", min_value=64, max_value=2048, value=512, step=64)
@@ -107,11 +133,29 @@ session_title = session_options[active_session_id] if active_session_id else "Ch
 # Modes Checkboxes
 mode_col1, mode_col2, mode_col3 = st.columns(3)
 with mode_col1:
-    rag_mode = st.checkbox("📂 Enable RAG Document Mode", value=False)
+    rag_mode = st.checkbox("📂 Enable RAG Document/Image Mode", value=True)
 with mode_col2:
     web_mode = st.checkbox("🌐 Enable Internet Search Mode", value=False)
 with mode_col3:
-    ocr_mode = st.checkbox("📷 Use OCR Extracted Text Context", value=False)
+    ocr_mode = st.checkbox("📷 Use Active OCR Extracted Context", value=False)
+
+# Target File Selection for RAG
+user_docs = db.get_documents_by_user(st.session_state.user_id)
+all_file_names = [d['file_name'] for d in user_docs] if user_docs else []
+
+selected_target_files = []
+if rag_mode:
+    if all_file_names:
+        selected_target_files = st.multiselect(
+            "🎯 Target Files for Response (Optional Filter)",
+            options=all_file_names,
+            default=[],
+            help="Select specific uploaded files or images to generate responses from. Leave empty to search across ALL indexed documents."
+        )
+    else:
+        st.info("ℹ️ No uploaded files found. Go to Documents page to upload files for RAG.")
+
+
 
 # Fetch history
 messages = db.get_messages_by_session(active_session_id)
@@ -147,6 +191,15 @@ for msg in messages:
     )
 st.markdown('</div>', unsafe_allow_html=True)
 
+def render_html(html_code, height=40):
+    try:
+        if hasattr(st, "html"):
+            st.html(html_code)
+        else:
+            st.components.v1.html(html_code, height=height)
+    except Exception:
+        st.components.v1.html(html_code, height=height)
+
 # Audio Text-to-Speech component for the last response
 if messages and messages[-1]['role'] == 'assistant':
     last_assistant_msg = messages[-1]['content']
@@ -169,7 +222,8 @@ if messages and messages[-1]['role'] == 'assistant':
     }}
     </script>
     """
-    st.components.v1.html(tts_html, height=40)
+    render_html(tts_html, height=40)
+
 
 # Input container
 st.markdown("---")
@@ -271,7 +325,8 @@ function toggleRecognition() {
 }
 </script>
 """
-st.components.v1.html(stt_html, height=180)
+render_html(stt_html, height=180)
+
 
 # Form for user message input
 with st.form("chat_form", clear_on_submit=True):
@@ -313,13 +368,24 @@ if messages and messages[-1]['role'] == 'user':
                     
     # B. RAG document retrieval mode
     if rag_mode:
-        with st.spinner("Retrieving document context..."):
-            rag_results = RAGManager.retrieve_context(last_user_msg, top_k=4)
+        filter_label = f" across {len(selected_target_files)} selected files" if selected_target_files else ""
+        with st.spinner(f"Retrieving context using {rag_search_mode_ui}{filter_label}..."):
+            rag_results = RAGManager.retrieve_context(
+                query=last_user_msg, 
+                top_k=config.DEFAULT_TOP_K,
+                similarity_threshold=config.DEFAULT_SIMILARITY_THRESHOLD,
+                search_mode=rag_search_mode,
+                doc_filter=selected_target_files if selected_target_files else None
+            )
             if rag_results:
-                context += "RETRIEVED DOCUMENT CONTEXT:\n"
+                context += "RETRIEVED MULTI-MODAL DOCUMENT & IMAGE CONTEXT:\n"
                 for i, chunk in enumerate(rag_results, 1):
-                    context += f"Document Source [{chunk['file_name']}]:\n{chunk['text']}\n\n"
-                    citations.append(f"Document chunk from `{chunk['file_name']}` (Score: {chunk['score']:.2f})")
+                    file_type = chunk.get('file_type', 'Document')
+                    score_val = chunk.get('score', 0.0)
+                    context += f"Source [{i}] ({file_type}: `{chunk['file_name']}`, Relevance: {score_val:.4f}):\n{chunk['text']}\n\n"
+                    citations.append(f"Source [{i}] `{chunk['file_name']}` ({file_type}, Score: {score_val:.4f})")
+
+
                     
     # C. OCR text mode
     if ocr_mode and "ocr_text" in st.session_state and st.session_state.ocr_text:

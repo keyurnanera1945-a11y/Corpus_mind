@@ -3,17 +3,30 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.ipynb_checkpoints
+.ipynb_checkpoints/
 
-# Environment variables
+# Virtual Environment
+venv/
+.venv/
+env/
+
+# Environment Variables / Secrets
 .env
+.env.*
+!.env.example
 
-# Project specific directories (Local SQLite data and indices)
+# Local Data
 data/
+
+# Uploads
 uploads/*
 !uploads/.gitkeep
+
+# Vector Store
 vector_store/*
 !vector_store/.gitkeep
+
+# Logs
 logs/*
 !logs/.gitkeep
 
@@ -21,5 +34,18 @@ logs/*
 .vscode/
 .idea/
 
-.venv/
+# OS Files
+.DS_Store
+Thumbs.db
 
+# Python Build / Distribution
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+*.ipynb_checkpoints/
+
+# Temporary Files
+*.tmp
+*.temp

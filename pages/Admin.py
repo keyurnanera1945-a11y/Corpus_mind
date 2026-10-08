@@ -25,12 +25,17 @@ if css_path.exists():
 
 # Sidebar layout
 with st.sidebar:
-    st.image("https://img.icons8.com/clouds/200/robot-3.png", width=70)
-    st.markdown(f"**Admin: {st.session_state.username}**")
+    st.image("https://img.icons8.com/clouds/200/robot-3.png", width=90)
+    st.markdown(f"### Admin: **{st.session_state.username}**")
+    st.markdown(
+        '<span style="background-color:#ef4444; color:white; padding:4px 10px; border-radius:12px; font-weight:bold; font-size:12px;">👑 ADMINISTRATOR AREA</span>',
+        unsafe_allow_html=True
+    )
     st.markdown("---")
     if st.button("🚪 Logout", use_container_width=True):
         AuthManager.logout_user()
         st.rerun()
+
 
 st.title("🛡️ Administrative Control Panel")
 st.markdown("Manage user accounts, monitor system documents, and perform general database operations.")

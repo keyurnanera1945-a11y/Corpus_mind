@@ -6,16 +6,17 @@ A private, locally-hosted Retrieval-Augmented Generation (RAG) assistant built u
 
 ## 🌟 Key Features
 
-1. **AI Chat with Ollama**: Local conversational AI using the Llama 3.2 model.
-2. **Retrieval-Augmented Generation (RAG)**: Upload documents (PDF, DOCX, TXT) and ask questions grounded in their content.
-3. **Local Vector Search**: Stores embeddings using SentenceTransformers (`all-mpnet-base-v2`) and searches with FAISS (or custom NumPy cosine similarity fallback).
-4. **Image OCR**: Run Tesseract OCR on uploaded images to extract text for the conversation.
-5. **Speech Tools**: Browser Speech-to-Text (microphone input) and Text-to-Speech (read-aloud responses).
-6. **Multi-Session History**: Creates and saves multiple chat threads in SQLite.
-7. **Secure Login**: Secure Register/Login portal with PBKDF2 password hashing.
-8. **Admin Panel**: Manage user roles, check database metrics, and view uploaded files.
-9. **Analytics**: Visual charts showing chats count and response times.
-10. **Data Export**: Export chats to plain text, Markdown, or PDF formats.
+1. **AI Chat with Ollama**: Local conversational AI using Ollama (Llama 3.2, Mistral, Phi-3).
+2. **Multi-Modal Retrieval-Augmented Generation (RAG)**: Upload documents (**PDF, DOCX, TXT, MD, CSV, JSON**) or image files (**PNG, JPG, JPEG, WEBP, BMP, TIFF**) and ask grounded questions.
+3. **Scanned PDF OCR Fallback**: Automatic page-by-page Tesseract OCR fallback for scanned or image-only PDF files.
+4. **Hybrid Retrieval (BM25 + Dense RRF)**: Fuses Okapi BM25 sparse keyword matching with FAISS/NumPy dense vector embeddings using **Reciprocal Rank Fusion (RRF)** for maximum retrieval accuracy.
+5. **Image OCR & Direct Indexing**: Extract text from images using Tesseract OCR with instant one-click indexing into the RAG vector store.
+6. **Speech Tools**: Browser Speech-to-Text (microphone input) and Text-to-Speech (read-aloud responses).
+7. **Multi-Session History**: Creates and saves multiple chat threads in SQLite database.
+8. **Secure Login Portal**: Secure Register/Login portal with PBKDF2 password hashing.
+9. **Admin Panel**: Manage user roles, check database metrics, and view uploaded files.
+10. **Analytics & Data Export**: Visual charts for chat metrics and export options to TXT, Markdown, or PDF formats.
+
 
 ---
 

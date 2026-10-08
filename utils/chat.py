@@ -115,7 +115,12 @@ class OllamaChatManager:
         
         try:
             url = f"{config.OLLAMA_API_URL}/api/chat"
+<<<<<<< HEAD
+            # 10s connection timeout, 180s read timeout for long streaming LLM generation
+            response = requests.post(url, json=payload, stream=True, timeout=(10, 180))
+=======
             response = requests.post(url, json=payload, stream=True, timeout=30)
+>>>>>>> origin/main
             
             if response.status_code != 200:
                 yield f"Error: Ollama API returned status code {response.status_code}. Make sure Ollama is running."
@@ -133,6 +138,16 @@ class OllamaChatManager:
                     if content:
                         yield content
                         
+<<<<<<< HEAD
+        except requests.exceptions.Timeout:
+            logger.error(f"Ollama request timed out at {config.OLLAMA_API_URL}")
+            yield f"Timeout error: Ollama at {config.OLLAMA_API_URL} took too long to respond. Check system CPU/GPU usage or lower max tokens."
         except Exception as e:
             logger.error(f"Ollama connection error: {e}")
             yield f"Connection error: Could not reach Ollama at {config.OLLAMA_API_URL}. Please verify Ollama is installed and running locally."
+
+=======
+        except Exception as e:
+            logger.error(f"Ollama connection error: {e}")
+            yield f"Connection error: Could not reach Ollama at {config.OLLAMA_API_URL}. Please verify Ollama is installed and running locally."
+>>>>>>> origin/main

@@ -29,9 +29,15 @@ DEFAULT_EMBEDDING_MODEL = "all-mpnet-base-v2"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 
-# Supported Document Formats
-SUPPORTED_DOC_EXTENSIONS = {".pdf", ".docx", ".txt"}
-SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+# Hybrid RAG Configurations
+RAG_SEARCH_MODE = "hybrid"  # Options: "hybrid", "dense", "bm25"
+RRF_K = 60                  # Reciprocal Rank Fusion constant
+DEFAULT_TOP_K = 4
+DEFAULT_SIMILARITY_THRESHOLD = 0.15
+
+# Supported Document & Image Formats
+SUPPORTED_DOC_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".csv", ".json"}
+SUPPORTED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff"}
 
 # UI Themes
 THEMES = {
@@ -58,3 +64,4 @@ ASSISTANT_PERSONALITIES = {
         "Write clean, well-commented, and efficient code. Explain your design decisions briefly."
     )
 }
+
