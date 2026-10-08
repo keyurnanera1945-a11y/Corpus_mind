@@ -18,16 +18,29 @@ if css_path.exists():
     with open(css_path, "r") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
+is_admin = st.session_state.get("user_role") == "admin"
+role_badge = "👑 ADMIN" if is_admin else "👤 USER"
+role_bg = "#ef4444" if is_admin else "#3b82f6"
+
 # Sidebar layout
 with st.sidebar:
-    st.image("https://img.icons8.com/clouds/200/robot-3.png", width=70)
-    st.markdown(f"**User: {st.session_state.username}**")
+    st.image("https://img.icons8.com/clouds/200/robot-3.png", width=80)
+    st.markdown(f"User: **{st.session_state.username}**")
+    st.markdown(
+        f'<span style="background-color:{role_bg}; color:white; padding:3px 8px; border-radius:12px; font-weight:bold; font-size:11px;">{role_badge}</span>',
+        unsafe_allow_html=True
+    )
+    if is_admin:
+        st.markdown("")
+        if st.button("🛡️ Admin Panel", use_container_width=True):
+            st.switch_page("pages/Admin.py")
     st.markdown("---")
     if st.button("🚪 Logout", use_container_width=True):
         AuthManager.logout_user()
         st.rerun()
 
 st.title("📊 Usage & Performance Analytics")
+
 st.markdown("System metrics tracking conversation volume, response latency, and model allocation.")
 
 # Retrieve stats
