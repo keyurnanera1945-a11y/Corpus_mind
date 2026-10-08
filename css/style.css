@@ -1,0 +1,148 @@
+/* Modern AI Assistant Custom Styling */
+
+/* Main Layout Styles */
+.stApp {
+    background-size: cover;
+    background-attachment: fixed;
+    transition: background 0.3s ease-in-out;
+}
+
+/* Glassmorphism Cards */
+.glass-card {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 16px;
+    padding: 24px;
+    margin: 16px 0;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+}
+
+.glass-card:hover {
+    transform: translateY(-4px);
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* Chat bubble structures */
+.chat-container {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 10px 0;
+}
+
+.chat-bubble {
+    display: flex;
+    gap: 12px;
+    padding: 16px;
+    border-radius: 12px;
+    margin-bottom: 8px;
+    animation: fadeIn 0.4s ease-out;
+}
+
+.chat-bubble-user {
+    background-color: rgba(37, 99, 235, 0.15); /* Light blue trans */
+    border-left: 4px solid #2563eb;
+}
+
+.chat-bubble-assistant {
+    background-color: rgba(16, 185, 129, 0.08); /* Light green trans */
+    border-left: 4px solid #10b981;
+}
+
+.chat-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 16px;
+    flex-shrink: 0;
+}
+
+.chat-avatar-user {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: white;
+}
+
+.chat-avatar-assistant {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: white;
+}
+
+.chat-message-content {
+    flex-grow: 1;
+    font-size: 15px;
+    line-height: 1.6;
+}
+
+/* Animations */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Animated Statistics Cards */
+.stat-container {
+    display: flex;
+    gap: 20px;
+    justify-content: space-between;
+    flex-wrap: wrap;
+}
+
+.stat-card {
+    flex: 1 1 200px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.stat-card:hover {
+    border-color: #2563eb;
+    box-shadow: 0 0 15px rgba(37, 99, 235, 0.2);
+}
+
+.stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    margin-top: 8px;
+    background: linear-gradient(45deg, #3b82f6, #10b981);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* Text area & Inputs custom look */
+.stTextArea textarea {
+    border-radius: 10px !important;
+}
+
+/* Scrollbar styles */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+::-webkit-scrollbar-track {
+    background: rgba(0,0,0,0.05);
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.2);
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.4);
+}
