@@ -3,13 +3,13 @@ import logging
 from datetime import datetime
 import os
 import sys
+from typing import Optional, List, Dict, Any
 
 # Add parent directory to sys.path to allow imports from config
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 class DatabaseManager:
     def __init__(self, db_path=None):
@@ -62,7 +62,7 @@ class DatabaseManager:
             )
             """)
             
-            # Documents table
+            # Documents table with doc_hash support
             cursor.execute("""
             CREATE TABLE IF NOT EXISTS documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,9 +73,17 @@ class DatabaseManager:
                 upload_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 status TEXT DEFAULT 'uploaded',
                 chunk_count INTEGER DEFAULT 0,
+                doc_hash TEXT,
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
             """)
+
+            # Migration: Ensure doc_hash column exists in existing database
+            cursor.execute("PRAGMA table_info(documents)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "doc_hash" not in columns:
+                cursor.execute("ALTER TABLE documents ADD COLUMN doc_hash TEXT")
+                logger.info("Migrated documents table: added doc_hash column.")
             
             # Analytics logs table
             cursor.execute("""
@@ -91,8 +99,6 @@ class DatabaseManager:
             )
             """)
             
-            # Insert default admin user if not exists (username: admin, pass: admin123)
-            # Since password hashing happens in auth.py, we will handle that during registration/auth setup.
             conn.commit()
             logger.info("Database tables initialized successfully.")
 
@@ -157,19 +163,28 @@ class DatabaseManager:
             )
             return [dict(row) for row in cursor.fetchall()]
 
-    def update_chat_session_title(self, session_id, new_title):
+    def update_chat_session_title(self, session_id, new_title, user_id=None):
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE chat_sessions SET title = ?, updated_at = ? WHERE id = ?",
-                (new_title, datetime.now(), session_id)
-            )
+            if user_id is not None:
+                cursor.execute(
+                    "UPDATE chat_sessions SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                    (new_title, datetime.now(), session_id, user_id)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE chat_sessions SET title = ?, updated_at = ? WHERE id = ?",
+                    (new_title, datetime.now(), session_id)
+                )
             conn.commit()
 
-    def delete_chat_session(self, session_id):
+    def delete_chat_session(self, session_id, user_id=None):
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
+            if user_id is not None:
+                cursor.execute("DELETE FROM chat_sessions WHERE id = ? AND user_id = ?", (session_id, user_id))
+            else:
+                cursor.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
             conn.commit()
 
     # Message operations
@@ -205,45 +220,72 @@ class DatabaseManager:
             )
             conn.commit()
 
-    # Documents operations
-    def add_document(self, user_id, file_name, file_size, file_path, chunk_count=0):
+    # Documents operations with strict user scoping
+    def add_document(self, user_id: int, file_name: str, file_size: int, file_path: str, chunk_count: int = 0, doc_hash: Optional[str] = None):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO documents (user_id, file_name, file_size, file_path, chunk_count, status) VALUES (?, ?, ?, ?, ?, 'indexed')",
-                (user_id, file_name, file_size, file_path, chunk_count)
+                "INSERT INTO documents (user_id, file_name, file_size, file_path, chunk_count, status, doc_hash) VALUES (?, ?, ?, ?, ?, 'indexed', ?)",
+                (user_id, file_name, file_size, file_path, chunk_count, doc_hash)
             )
             conn.commit()
             return cursor.lastrowid
 
-    def get_documents_by_user(self, user_id):
+    def get_documents_by_user(self, user_id: int) -> List[Dict[str, Any]]:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM documents WHERE user_id = ? ORDER BY upload_time DESC", (user_id,))
             return [dict(row) for row in cursor.fetchall()]
 
-    def get_all_documents(self):
+    def get_document_by_id(self, document_id: int, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            if user_id is not None:
+                cursor.execute("SELECT * FROM documents WHERE id = ? AND user_id = ?", (document_id, user_id))
+            else:
+                cursor.execute("SELECT * FROM documents WHERE id = ?", (document_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_document_by_hash(self, user_id: int, doc_hash: str) -> Optional[Dict[str, Any]]:
+        if not doc_hash:
+            return None
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM documents WHERE user_id = ? AND doc_hash = ?", (user_id, doc_hash))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_all_documents(self) -> List[Dict[str, Any]]:
+        """Admin-only global document list."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM documents ORDER BY upload_time DESC")
             return [dict(row) for row in cursor.fetchall()]
 
-    def delete_document(self, document_id):
+    def delete_document(self, document_id: int, user_id: Optional[int] = None) -> bool:
+        """Delete document file and DB record with authorization check."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT file_path FROM documents WHERE id = ?", (document_id,))
+            if user_id is not None:
+                cursor.execute("SELECT id, user_id, file_path FROM documents WHERE id = ? AND user_id = ?", (document_id, user_id))
+            else:
+                cursor.execute("SELECT id, user_id, file_path FROM documents WHERE id = ?", (document_id,))
             row = cursor.fetchone()
-            if row:
-                file_path = row['file_path']
-                if os.path.exists(file_path):
-                    try:
-                        os.remove(file_path)
-                    except Exception as e:
-                        logger.error(f"Error removing file {file_path}: {e}")
-                cursor.execute("DELETE FROM documents WHERE id = ?", (document_id,))
-                conn.commit()
-                return True
-            return False
+            if not row:
+                logger.warning(f"Unauthorized or non-existent document delete attempt for doc_id={document_id}, user_id={user_id}")
+                return False
+
+            file_path = row['file_path']
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception as e:
+                    logger.error(f"Error removing physical file {file_path}: {e}")
+
+            cursor.execute("DELETE FROM documents WHERE id = ?", (document_id,))
+            conn.commit()
+            return True
 
     # Analytics operations
     def log_analytics(self, user_id, event_type, description=None, response_time_ms=0, model_used=None):
@@ -259,25 +301,20 @@ class DatabaseManager:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Total chats/messages
             cursor.execute("SELECT COUNT(*) FROM messages WHERE role='user'")
             total_user_messages = cursor.fetchone()[0]
             
-            # Total documents
             cursor.execute("SELECT COUNT(*), SUM(file_size) FROM documents")
             doc_row = cursor.fetchone()
             total_docs = doc_row[0] or 0
             total_size_bytes = doc_row[1] or 0
             
-            # Avg response time
             cursor.execute("SELECT AVG(response_time_ms) FROM messages WHERE role='assistant' AND response_time_ms IS NOT NULL")
             avg_resp = cursor.fetchone()[0] or 0
             
-            # Model usage distribution
             cursor.execute("SELECT model, COUNT(*) FROM messages WHERE role='assistant' GROUP BY model")
             model_usage = cursor.fetchall()
             
-            # Messages over time
             cursor.execute("""
                 SELECT DATE(timestamp) as msg_date, COUNT(*) 
                 FROM messages 
@@ -296,5 +333,6 @@ class DatabaseManager:
                 "model_usage": model_usage,
                 "msg_history": msg_history
             }
+
 # Create globally accessible manager instance
 db = DatabaseManager()

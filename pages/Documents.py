@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import sys
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -15,6 +16,8 @@ from utils.ocr import OCRManager
 
 # Guard Page Access
 AuthManager.require_auth()
+
+user_id = st.session_state.user_id
 
 # Page Styling
 css_path = config.CSS_DIR / "style.css"
@@ -51,7 +54,6 @@ with st.sidebar:
 
 st.title("📂 Multi-Modal Document & OCR RAG Portal")
 
-
 tab_upload, tab_manage, tab_ocr, tab_search = st.tabs([
     "📥 Upload Documents & Images", 
     "🗃️ Manage RAG Files", 
@@ -66,7 +68,8 @@ with tab_upload:
     st.header("Upload Files for RAG Indexing")
     st.markdown(
         "Upload document files (**PDF, DOCX, TXT, MD, CSV, JSON**) or image files (**PNG, JPG, JPEG, WEBP, BMP, TIFF**). "
-        "Text is extracted automatically via parser engines or **Tesseract OCR**, split into semantic chunks, and indexed into the RAG vector store."
+        "Text is extracted automatically via high-speed native extractors (**PyMuPDF**) or **Tesseract OCR / RapidOCR**, "
+        "split into semantic chunks with page citations, and indexed into your private vector store."
     )
     
     supported_types = ["pdf", "docx", "txt", "md", "csv", "json", "png", "jpg", "jpeg", "webp", "bmp", "tiff"]
@@ -81,67 +84,82 @@ with tab_upload:
             st.warning("Please upload at least one document or image file first.")
         else:
             success_count = 0
+            user_upload_dir = config.get_user_uploads_dir(user_id)
             splitter = RecursiveTextSplitter(chunk_size=config.CHUNK_SIZE, chunk_overlap=config.CHUNK_OVERLAP)
             
             with st.status("Processing uploaded files...", expanded=True) as status:
                 for uploaded_file in uploaded_files:
                     file_name = uploaded_file.name
-                    file_size = len(uploaded_file.getvalue())
+                    file_bytes = uploaded_file.getvalue()
+                    file_size = len(file_bytes)
                     ext = Path(file_name).suffix.lower()
                     
                     st.write(f"🔄 Processing `{file_name}`...")
                     
-                    # Save to uploads folder
-                    save_path = config.UPLOADS_DIR / file_name
+                    # Prevent file collisions using unique timestamp prefix while keeping human-readable display name
+                    safe_storage_name = f"{int(time.time() * 1000)}_{Path(file_name).name}"
+                    save_path = user_upload_dir / safe_storage_name
+
                     try:
                         with open(save_path, "wb") as f:
-                            f.write(uploaded_file.getbuffer())
+                            f.write(file_bytes)
                         
-                        # Extract text (handles PDFs, docs, images OCR, CSV, etc.)
-                        text = DocumentLoader.load_document(str(save_path))
-                        if not text or not text.strip():
+                        doc_hash = DocumentLoader.compute_file_hash(str(save_path))
+                        
+                        # Extract structured page-level text
+                        pages = DocumentLoader.load_document_pages(str(save_path))
+                        has_text = any(p.get("text", "").strip() for p in pages)
+
+                        if not has_text:
                             if ext in config.SUPPORTED_IMAGE_EXTENSIONS or ext == ".pdf":
-                                if not OCRManager.is_tesseract_available():
+                                if not OCRManager.is_tesseract_available() and not OCRManager.is_rapidocr_available():
                                     st.warning(
-                                        f"⚠️ Could not extract OCR text from `{file_name}` because **Tesseract OCR binary is missing** on Windows.\n\n"
-                                        "Please download Tesseract from [UB-Mannheim Wiki](https://github.com/UB-Mannheim/tesseract/wiki), "
-                                        "install to `C:\\Program Files\\Tesseract-OCR\\tesseract.exe`, and check the Settings page!"
+                                        f"⚠️ Could not extract text from `{file_name}` because no local OCR engine was found.\n\n"
+                                        "Please configure Tesseract OCR in Settings."
                                     )
                                 else:
-                                    st.error(f"Could not extract text from `{file_name}`. Empty file or unreadable content.")
+                                    st.error(f"Could not extract readable text from `{file_name}`. File may be blank or unreadable.")
                             else:
                                 st.error(f"Could not extract text from `{file_name}`. Empty content or unsupported layout.")
                             continue
 
-                            
-                        # Split chunks
-                        chunks = splitter.split_text(text)
-                        chunk_count = len(chunks)
-                        
-                        if chunk_count == 0:
-                            st.warning(f"No chunks generated for `{file_name}`.")
-                            continue
+                        doc_type_label = "Image OCR" if ext in config.SUPPORTED_IMAGE_EXTENSIONS else "Document"
 
-                        # Save document entry to SQLite
+                        # Save document record to database with user_id and doc_hash
                         doc_id = db.add_document(
-                            user_id=st.session_state.user_id,
+                            user_id=user_id,
                             file_name=file_name,
                             file_size=file_size,
                             file_path=str(save_path),
-                            chunk_count=chunk_count
+                            chunk_count=0,
+                            doc_hash=doc_hash
                         )
-                        
+
                         if doc_id:
+                            # Split pages preserving page numbers and document ID
+                            chunks = splitter.split_pages(
+                                pages=pages,
+                                doc_id=doc_id,
+                                user_id=user_id,
+                                file_name=file_name,
+                                file_type=doc_type_label
+                            )
+
+                            # Update chunk count
+                            with db.get_connection() as conn:
+                                conn.cursor().execute("UPDATE documents SET chunk_count = ? WHERE id = ?", (len(chunks), doc_id))
+                                conn.commit()
+
                             success_count += 1
-                            doc_type_label = "Image (OCR)" if ext in config.SUPPORTED_IMAGE_EXTENSIONS else "Document"
-                            st.write(f"✅ Indexed `{file_name}` ({doc_type_label}) -> {chunk_count} text chunks")
-                            db.log_analytics(st.session_state.user_id, "document_upload", f"Uploaded and indexed {file_name}")
+                            st.write(f"✅ Extracted `{file_name}` -> {len(pages)} pages, {len(chunks)} text chunks")
+                            db.log_analytics(user_id, "document_upload", f"Uploaded and indexed {file_name}")
+
                     except Exception as e:
                         st.error(f"Error processing file {file_name}: {e}")
                         
                 if success_count > 0:
-                    status.update(label="Rebuilding Vector & BM25 Index...", state="running")
-                    success, docs_c, chunks_c = RAGManager.rebuild_index_from_db()
+                    status.update(label="Rebuilding your private Hybrid RAG Index...", state="running")
+                    success, docs_c, chunks_c = RAGManager.rebuild_user_index(user_id)
                     if success:
                         status.update(label=f"Successfully indexed {success_count} files ({chunks_c} chunks total)!", state="complete")
                         st.success(f"Indexed {success_count} files into {chunks_c} vector chunks!")
@@ -155,11 +173,11 @@ with tab_upload:
 with tab_manage:
     st.header("Indexed Documents & Images")
     
-    # Retrieve user docs
-    docs = db.get_documents_by_user(st.session_state.user_id)
+    # Retrieve user docs strictly for this authenticated user
+    docs = db.get_documents_by_user(user_id)
     
     # Format counts
-    total_size = sum(doc['file_size'] for doc in docs) / (1024.0 * 1024.0) if docs else 0.0 # MB
+    total_size = sum(doc['file_size'] for doc in docs) / (1024.0 * 1024.0) if docs else 0.0
     total_chunks = sum(doc['chunk_count'] for doc in docs) if docs else 0
     img_count = sum(1 for doc in docs if Path(doc['file_name']).suffix.lower() in config.SUPPORTED_IMAGE_EXTENSIONS)
     doc_count = len(docs) - img_count
@@ -180,16 +198,16 @@ with tab_manage:
             <div class="stat-card">
                 <h4>Storage Footprint</h4>
                 <div class="stat-value">{total_size:.2f} MB</div>
-                <small style="color:#9ca3af;">Uploads Directory</small>
+                <small style="color:#9ca3af;">Private Upload Directory</small>
             </div>
         </div>
         """,
         unsafe_allow_html=True
     )
     
-    if st.button("🔄 Rebuild Hybrid RAG Index", use_container_width=True):
-        with st.spinner("Reindexing all active documents..."):
-            success, docs_c, chunks_c = RAGManager.rebuild_index_from_db()
+    if st.button("🔄 Rebuild My Hybrid RAG Index", use_container_width=True):
+        with st.spinner("Reindexing your active documents..."):
+            success, docs_c, chunks_c = RAGManager.rebuild_user_index(user_id)
             if success:
                 st.success(f"Index rebuilt successfully! Indexed {docs_c} files with {chunks_c} total chunks.")
                 st.rerun()
@@ -213,11 +231,15 @@ with tab_manage:
                     st.write(f"🧩 {doc['chunk_count']} chunks")
                 with col4:
                     if st.button("🗑️ Delete", key=f"del_{doc['id']}", use_container_width=True):
-                        db.delete_document(doc['id'])
-                        with st.spinner("Updating Vector Store Index..."):
-                            RAGManager.rebuild_index_from_db()
-                        db.log_analytics(st.session_state.user_id, "document_delete", f"Deleted {doc['file_name']}")
-                        st.rerun()
+                        # Enforce user authorization on deletion
+                        deleted = db.delete_document(doc['id'], user_id=user_id)
+                        if deleted:
+                            with st.spinner("Updating Vector Store Index..."):
+                                RAGManager.rebuild_user_index(user_id)
+                            db.log_analytics(user_id, "document_delete", f"Deleted {doc['file_name']}")
+                            st.rerun()
+                        else:
+                            st.error("Could not delete file: Unauthorized or not found.")
                 
                 with st.expander(f"👁️ View Extracted Text Preview: {doc['file_name']}"):
                     if os.path.exists(doc['file_path']):
@@ -233,7 +255,7 @@ with tab_manage:
 # -----------------
 with tab_ocr:
     st.header("Extract & Index Text from Images")
-    st.markdown("Upload any image (PNG, JPG, JPEG, WEBP, BMP, TIFF) to run Tesseract OCR and extract embedded textual content.")
+    st.markdown("Upload any image (PNG, JPG, JPEG, WEBP, BMP, TIFF) to run multi-pass OCR with OpenCV CLAHE preprocessing and confidence evaluation.")
     
     ocr_file = st.file_uploader("Upload Image File for OCR", type=["png", "jpg", "jpeg", "webp", "bmp", "tiff"], key="ocr_tab_uploader")
     
@@ -242,10 +264,10 @@ with tab_ocr:
         st.session_state.ocr_filename = ocr_file.name
         
         if st.button("📷 Perform OCR Extraction", type="primary", use_container_width=True):
-            with st.spinner("Running Tesseract OCR Engine..."):
+            with st.spinner("Running Multi-Pass OCR Engine..."):
                 extracted_text = OCRManager.extract_text_from_bytes(ocr_file)
                 st.session_state.ocr_text = extracted_text
-                db.log_analytics(st.session_state.user_id, "ocr_extraction", f"Extracted text from {ocr_file.name}")
+                db.log_analytics(user_id, "ocr_extraction", f"Extracted text from {ocr_file.name}")
                 
     if st.session_state.ocr_text:
         st.subheader("Extracted OCR Text Content:")
@@ -254,11 +276,11 @@ with tab_ocr:
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("📥 Save & Index to RAG Store", type="primary", use_container_width=True):
-                # Save extracted text directly as a document file for RAG
+                user_upload_dir = config.get_user_uploads_dir(user_id)
                 timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
                 orig_stem = Path(st.session_state.ocr_filename or "image").stem
                 save_filename = f"ocr_{orig_stem}_{timestamp_str}.txt"
-                save_path = config.UPLOADS_DIR / save_filename
+                save_path = user_upload_dir / save_filename
                 
                 header_text = f"--- OCR Extracted Text from Image: {st.session_state.ocr_filename} ---\n\n" + st.session_state.ocr_text
                 
@@ -266,21 +288,27 @@ with tab_ocr:
                     f.write(header_text)
                     
                 file_size = len(header_text.encode('utf-8'))
-                splitter = RecursiveTextSplitter(chunk_size=config.CHUNK_SIZE, chunk_overlap=config.CHUNK_OVERLAP)
-                chunks = splitter.split_text(header_text)
+                doc_hash = DocumentLoader.compute_file_hash(str(save_path))
                 
                 doc_id = db.add_document(
-                    user_id=st.session_state.user_id,
+                    user_id=user_id,
                     file_name=save_filename,
                     file_size=file_size,
                     file_path=str(save_path),
-                    chunk_count=len(chunks)
+                    chunk_count=0,
+                    doc_hash=doc_hash
                 )
                 
                 if doc_id:
-                    RAGManager.rebuild_index_from_db()
+                    splitter = RecursiveTextSplitter(chunk_size=config.CHUNK_SIZE, chunk_overlap=config.CHUNK_OVERLAP)
+                    chunks = splitter.split_text(header_text)
+                    with db.get_connection() as conn:
+                        conn.cursor().execute("UPDATE documents SET chunk_count = ? WHERE id = ?", (len(chunks), doc_id))
+                        conn.commit()
+
+                    RAGManager.rebuild_user_index(user_id)
                     st.success(f"Saved OCR text as `{save_filename}` and indexed into RAG store ({len(chunks)} chunks)!")
-                    db.log_analytics(st.session_state.user_id, "ocr_rag_indexed", f"Indexed OCR image {save_filename}")
+                    db.log_analytics(user_id, "ocr_rag_indexed", f"Indexed OCR image {save_filename}")
 
         with col2:
             if st.button("✅ Send to Chat Context", use_container_width=True):
@@ -321,7 +349,7 @@ with tab_search:
     selected_mode = mode_map[search_engine]
 
     # Target Files Multiselect
-    user_docs = db.get_documents_by_user(st.session_state.user_id)
+    user_docs = db.get_documents_by_user(user_id)
     all_file_names = [d['file_name'] for d in user_docs] if user_docs else []
     selected_test_files = st.multiselect(
         "Filter Search to Specific Files (Optional)",
@@ -334,24 +362,25 @@ with tab_search:
         with st.spinner(f"Retrieving context using {search_engine}..."):
             results = RAGManager.retrieve_context(
                 query=search_query,
+                user_id=user_id,
                 top_k=top_k,
                 similarity_threshold=min_score,
                 search_mode=selected_mode,
                 doc_filter=selected_test_files if selected_test_files else None
             )
 
-            
             if results:
                 st.success(f"Retrieved {len(results)} matching chunks using {search_engine}:")
                 for i, res in enumerate(results, 1):
                     file_type = res.get('file_type', 'Document')
+                    page_num = res.get('page_number', 1)
                     score_label = f"RRF Rank Score: {res['score']:.4f}" if selected_mode == "hybrid" else f"Similarity Score: {res['score']:.4f}"
                     
                     st.markdown(
                         f"""
                         <div class="glass-card" style="margin-top:10px;">
-                            <div style="display:flex; justify-between; align-items:center;">
-                                <strong>Match #{i} | Source: <code>{res['file_name']}</code> ({file_type})</strong>
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <strong>Match #{i} | <code>{res['file_name']}</code> (p. {page_num}, {file_type})</strong>
                                 <span style="background:#10b981; color:white; padding:2px 8px; border-radius:12px; font-size:12px;">{score_label}</span>
                             </div>
                             <div style="background-color:rgba(0,0,0,0.15); margin-top:8px; padding:10px; border-radius:6px; font-family:monospace; white-space:pre-wrap;">{res['text']}</div>
@@ -361,4 +390,3 @@ with tab_search:
                     )
             else:
                 st.warning("No context chunks match the search criteria. Try adjusting query terms or lower the score threshold.")
-

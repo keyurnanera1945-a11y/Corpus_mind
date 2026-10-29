@@ -112,14 +112,12 @@ with tab_docs:
         )
         
         if st.button("🗑️ Delete Selected File Globally", use_container_width=True):
-            # Find the doc row
             for doc in global_docs:
                 if doc['file_name'] == doc_to_delete:
                     db.delete_document(doc['id'])
-                    # Rebuild the RAG vector store
                     from utils.rag import RAGManager
-                    RAGManager.rebuild_index_from_db()
-                    st.success(f"Document '{doc_to_delete}' deleted and vector index rebuilt.")
+                    RAGManager.rebuild_user_index(doc['user_id'])
+                    st.success(f"Document '{doc_to_delete}' deleted and user {doc['user_id']} vector index updated.")
                     st.rerun()
     else:
         st.info("No uploaded documents indexed in system.")
