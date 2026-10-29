@@ -76,12 +76,50 @@ else:
     )
     
     ocr_available = OCRManager.is_tesseract_available()
+    rapid_available = OCRManager.is_rapidocr_available()
     if ocr_available:
         st.success("✅ Tesseract OCR binary verified successfully.")
     else:
-        st.error("❌ Tesseract OCR binary not found at specified path.")
-        st.info("Download Tesseract for Windows: https://github.com/UB-Mannheim/tesseract/wiki")
-        
+        st.warning("⚠️ Tesseract OCR binary not found at specified path.")
+
+    if rapid_available:
+        st.info("✅ RapidOCR (ONNXRuntime) is also installed and ready as an alternative engine.")
+
+    # OCR Engine and Language Selection
+    ocr_col1, ocr_col2 = st.columns(2)
+    with ocr_col1:
+        ocr_engine_opt = st.selectbox(
+            "Default OCR Engine",
+            options=["tesseract", "rapidocr"],
+            index=0 if getattr(config, "DEFAULT_OCR_ENGINE", "tesseract") == "tesseract" else 1
+        )
+    with ocr_col2:
+        available_langs = OCRManager.get_available_languages()
+        ocr_lang_opt = st.selectbox(
+            "OCR Recognition Language",
+            options=available_langs if available_langs else ["eng"],
+            index=0
+        )
+
+    # Embedding Model Selection
+    st.markdown("---")
+    st.subheader("🧠 RAG & Embedding Architecture")
+    embedding_model_options = ["all-MiniLM-L6-v2", "all-mpnet-base-v2"]
+    current_emb = getattr(config, "DEFAULT_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    emb_idx = 0 if current_emb == "all-MiniLM-L6-v2" else 1
+    selected_emb_model = st.selectbox(
+        "Default Embedding Model",
+        options=embedding_model_options,
+        index=emb_idx,
+        help="all-MiniLM-L6-v2 loads 15x faster and uses 8x less RAM with identical top-1 accuracy on CPU. all-mpnet-base-v2 outputs 768d vectors."
+    )
+
+    chunk_col1, chunk_col2 = st.columns(2)
+    with chunk_col1:
+        chunk_sz = st.number_input("Chunk Size (Characters)", min_value=200, max_value=2000, value=config.CHUNK_SIZE, step=50)
+    with chunk_col2:
+        chunk_ov = st.number_input("Chunk Overlap (Characters)", min_value=0, max_value=400, value=config.CHUNK_OVERLAP, step=10)
+
     ollama_url = st.text_input(
         "Ollama API URL Endpoint",
         value=config.OLLAMA_API_URL
@@ -139,9 +177,20 @@ else:
         env_file = Path(config.BASE_DIR) / ".env"
         dotenv.set_key(str(env_file), "OLLAMA_API_URL", ollama_url)
         dotenv.set_key(str(env_file), "TESSERACT_CMD_PATH", tesseract_path)
+        dotenv.set_key(str(env_file), "DEFAULT_EMBEDDING_MODEL", selected_emb_model)
+        dotenv.set_key(str(env_file), "DEFAULT_OCR_ENGINE", ocr_engine_opt)
+        dotenv.set_key(str(env_file), "OCR_LANG", ocr_lang_opt)
+        dotenv.set_key(str(env_file), "CHUNK_SIZE", str(chunk_sz))
+        dotenv.set_key(str(env_file), "CHUNK_OVERLAP", str(chunk_ov))
+        dotenv.set_key(str(env_file), "SESSION_TIMEOUT_MINUTES", str(session_timeout))
         
         config.OLLAMA_API_URL = ollama_url
         config.SESSION_TIMEOUT_MINUTES = session_timeout
+        config.DEFAULT_EMBEDDING_MODEL = selected_emb_model
+        config.DEFAULT_OCR_ENGINE = ocr_engine_opt
+        config.OCR_LANG = ocr_lang_opt
+        config.CHUNK_SIZE = chunk_sz
+        config.CHUNK_OVERLAP = chunk_ov
         
         st.success("System configuration updates saved to .env!")
         db.log_analytics(st.session_state.user_id, "save_configs", "Applied system settings")

@@ -8,7 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 from utils.auth import AuthManager
 from utils.database import db
-from utils.chat import OllamaChatManager, WebSearchManager
+from utils.chat import OllamaChatManager, WebSearchManager, PromptGroundingManager
 from utils.rag import RAGManager
 from utils.export import ExportManager
 
@@ -81,12 +81,12 @@ with st.sidebar:
             new_name = st.text_input("Rename", value=session_options[selected_session], key="rename_input", label_visibility="collapsed")
         with rename_col2:
             if st.button("Save", use_container_width=True):
-                db.update_chat_session_title(selected_session, new_name)
+                db.update_chat_session_title(selected_session, new_name, user_id=st.session_state.user_id)
                 st.rerun()
                 
         # Delete session
         if st.button("🗑️ Delete Session", type="secondary", use_container_width=True):
-            db.delete_chat_session(selected_session)
+            db.delete_chat_session(selected_session, user_id=st.session_state.user_id)
             st.session_state.active_session_id = None
             st.rerun()
     else:
@@ -349,62 +349,68 @@ if messages and messages[-1]['role'] == 'user':
     
     # 1. Compile System Prompt and Context
     chat_messages = []
-    
-    # System Instruction
-    chat_messages.append({"role": "system", "content": system_prompt})
-    
-    context = ""
     citations = []
     
     # A. Internet search mode
+    web_context = ""
     if web_mode:
         with st.spinner("Searching the web..."):
             search_results = WebSearchManager.search_duckduckgo(last_user_msg)
             if search_results:
-                context += "LIVE WEB SEARCH RESULTS:\n"
+                web_context += "LIVE WEB SEARCH RESULTS:\n"
                 for i, res in enumerate(search_results, 1):
-                    context += f"Source [{i}]: {res['title']}\nURL: {res['url']}\nSnippet: {res['snippet']}\n\n"
-                    citations.append(f"[{i}] [{res['title']}]({res['url']})")
+                    web_context += f"Source [{i}]: {res['title']}\nURL: {res['url']}\nSnippet: {res['snippet']}\n\n"
+                    citations.append(f"Web [{i}] [{res['title']}]({res['url']})")
                     
     # B. RAG document retrieval mode
+    rag_results = []
     if rag_mode:
         filter_label = f" across {len(selected_target_files)} selected files" if selected_target_files else ""
         with st.spinner(f"Retrieving context using {rag_search_mode_ui}{filter_label}..."):
             rag_results = RAGManager.retrieve_context(
                 query=last_user_msg, 
+                user_id=st.session_state.user_id,
                 top_k=config.DEFAULT_TOP_K,
                 similarity_threshold=config.DEFAULT_SIMILARITY_THRESHOLD,
                 search_mode=rag_search_mode,
                 doc_filter=selected_target_files if selected_target_files else None
             )
-            if rag_results:
-                context += "RETRIEVED MULTI-MODAL DOCUMENT & IMAGE CONTEXT:\n"
-                for i, chunk in enumerate(rag_results, 1):
-                    file_type = chunk.get('file_type', 'Document')
-                    score_val = chunk.get('score', 0.0)
-                    context += f"Source [{i}] ({file_type}: `{chunk['file_name']}`, Relevance: {score_val:.4f}):\n{chunk['text']}\n\n"
-                    citations.append(f"Source [{i}] `{chunk['file_name']}` ({file_type}, Score: {score_val:.4f})")
 
-
-                    
-    # C. OCR text mode
+    # C. Active OCR text mode
+    ocr_context = ""
     if ocr_mode and "ocr_text" in st.session_state and st.session_state.ocr_text:
-        context += f"EXTRACTED IMAGE OCR CONTEXT:\n{st.session_state.ocr_text}\n\n"
-        citations.append("OCR text context")
+        ocr_context += f"EXTRACTED ACTIVE IMAGE OCR CONTEXT:\n{st.session_state.ocr_text}\n\n"
+        citations.append("Active OCR Image Context")
         
-    # Append context to user prompt if any context was fetched
-    augmented_prompt = last_user_msg
-    if context:
+    # Construct Grounded Prompts
+    if rag_results:
+        sys_instruction, augmented_prompt, doc_citations = PromptGroundingManager.format_grounded_rag_prompt(
+            query=last_user_msg,
+            rag_chunks=rag_results,
+            personality_prompt=system_prompt,
+            context_budget_tokens=ctx_len
+        )
+        citations.extend(doc_citations)
+        if web_context:
+            augmented_prompt = f"{web_context}\n\n" + augmented_prompt
+        if ocr_context:
+            augmented_prompt = f"{ocr_context}\n\n" + augmented_prompt
+    elif web_context or ocr_context:
+        sys_instruction = system_prompt
         augmented_prompt = (
-            f"Use the following retrieved context to answer the prompt. "
-            f"If the answer cannot be found in the context, use your general knowledge but mention that. "
-            f"Ensure to cite sources matching the provided references.\n\n"
-            f"CONTEXT:\n{context}\n\n"
+            f"Use the following reference information to answer the user query.\n\n"
+            f"{web_context}\n{ocr_context}\n"
             f"USER QUERY: {last_user_msg}"
         )
+    else:
+        sys_instruction = system_prompt
+        augmented_prompt = last_user_msg
         
-    # Load recent conversation history (e.g. last 6 messages) for short-term memory
-    history_to_include = messages[-6:-1] # excluding the very last user message that we augmented
+    # Add grounded system prompt
+    chat_messages.append({"role": "system", "content": sys_instruction})
+
+    # Load recent conversation history (e.g. last 6 messages) for conversational continuity
+    history_to_include = messages[-6:-1]
     for h_msg in history_to_include:
         chat_messages.append({"role": h_msg['role'], "content": h_msg['content']})
         
