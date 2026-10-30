@@ -1,4 +1,4 @@
-# 🤖 Corpus Mind - Smart Document & OCR AI Assistant
+# 🤖 Corpus Mind - Smart RAG AI
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.30+-red.svg)](https://streamlit.io/)
